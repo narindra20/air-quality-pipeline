@@ -1,0 +1,11 @@
+.env
+*.env
+secrets/
+__pycache__/
+*.pyc
+venv/
+.venv/
+airflow.cfg
+airflow.db
+logs/
+.DS_Store
