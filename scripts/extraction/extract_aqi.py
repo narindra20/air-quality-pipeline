@@ -6,12 +6,10 @@ import logging
 import datetime
 from pathlib import Path
 import requests
-from dotenv import load_dotenv  # <-- Chargement du .env
+from dotenv import load_dotenv
 
-# Charge le fichier .env si présent
 load_dotenv()
 
-# Configuration du logger pour afficher les messages dans la console
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -19,7 +17,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("extract_aqi")
 
-# Definition des 5 villes et de leurs coordonnees GPS
 VILLES = [
     {"nom": "Paris", "lat": 48.8566, "lon": 2.3522},
     {"nom": "Marseille", "lat": 43.2965, "lon": 5.3698},
@@ -29,7 +26,6 @@ VILLES = [
 ]
 
 def fetch_air_pollution_history(lat, lon, start_ts, end_ts, api_key):
-    """Effectue la requete API pour recuperer l'historique de pollution d'une position GPS."""
     url = "http://api.openweathermap.org/data/2.5/air_pollution/history"
     params = {
         "lat": lat,
@@ -48,7 +44,6 @@ def fetch_air_pollution_history(lat, lon, start_ts, end_ts, api_key):
         logger.error(f"Erreur lors de la requete : {str(e)}")
         return None
 
-# --- BLOC DE TEST POUR UNE SEULE VILLE (KAN-10) ---
 if __name__ == "__main__":
     api_key = os.environ.get("OPENWEATHER_API_KEY")
     
@@ -56,21 +51,28 @@ if __name__ == "__main__":
         logger.error("Veuillez definir la variable OPENWEATHER_API_KEY dans votre fichier .env.")
         sys.exit(1)
         
-    paris = VILLES[0]
+    
     now = int(time.time())
-    two_hours_ago = now - 7200
+    three_months_ago = now - (90 * 24 * 3600)
     
-    logger.info(f"Test d'extraction pour {paris['nom']}...")
-    resultat = fetch_air_pollution_history(
-        lat=paris["lat"],
-        lon=paris["lon"],
-        start_ts=two_hours_ago,
-        end_ts=now,
-        api_key=api_key
-    )
+    logger.info("=== Debut de l'extraction sur 3 mois pour les 5 villes ===")
     
-    if resultat and "list" in resultat:
-        logger.info(f"✅ Test reussi ! {len(resultat['list'])} mesure(s) recue(s) pour {paris['nom']}.")
-        print(json.dumps(resultat, indent=2))
-    else:
-        logger.error("❌ Le test a echoue.")
+    for ville in VILLES:
+        logger.info(f"Recuperation des donnees pour {ville['nom']}...")
+        resultat = fetch_air_pollution_history(
+            lat=ville["lat"],
+            lon=ville["lon"],
+            start_ts=three_months_ago,
+            end_ts=now,
+            api_key=api_key
+        )
+        
+        if resultat and "list" in resultat:
+            logger.info(f" {ville['nom']}: {len(resultat['list'])} enregistrements recuperes.")
+        else:
+            logger.error(f" Echec de la recuperation pour {ville['nom']}.")
+        
+        
+        time.sleep(1)
+        
+    logger.info("=== Fin de l'extraction ===")
