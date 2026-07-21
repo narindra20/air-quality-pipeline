@@ -44,6 +44,23 @@ def fetch_air_pollution_history(lat, lon, start_ts, end_ts, api_key):
         logger.error(f"Erreur lors de la requete : {str(e)}")
         return None
 
+def save_raw_json(data, nom_ville, output_dir="raw"):
+    try:
+        path = Path(output_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        
+        timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = path / f"aqi_{nom_ville.lower()}_{timestamp_str}.json"
+        
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            
+        logger.info(f" Fichier enregistre avec succes : {filename}")
+        return True
+    except Exception as e:
+        logger.error(f"Erreur lors de la sauvegarde pour {nom_ville} : {str(e)}")
+        return False
+
 if __name__ == "__main__":
     api_key = os.environ.get("OPENWEATHER_API_KEY")
     
@@ -55,7 +72,7 @@ if __name__ == "__main__":
     now = int(time.time())
     three_months_ago = now - (90 * 24 * 3600)
     
-    logger.info("=== Debut de l'extraction sur 3 mois pour les 5 villes ===")
+    logger.info("=== Debut du pipeline d'extraction et sauvegarde raw ===")
     
     for ville in VILLES:
         logger.info(f"Recuperation des donnees pour {ville['nom']}...")
@@ -69,10 +86,10 @@ if __name__ == "__main__":
         
         if resultat and "list" in resultat:
             logger.info(f" {ville['nom']}: {len(resultat['list'])} enregistrements recuperes.")
+            save_raw_json(resultat, ville["nom"])
         else:
-            logger.error(f" Echec de la recuperation pour {ville['nom']}.")
-        
-        
+            logger.error(f" Echec de l'extraction pour {ville['nom']}.")
+            
         time.sleep(1)
         
-    logger.info("=== Fin de l'extraction ===")
+    logger.info("=== Fin du processus avec succes ===")
