@@ -2,8 +2,8 @@ name: Deploy Airflow Pipeline
 on:
   push:
     branches: [main, feature/*]
-  schedule:
-    - cron: '0 * * * *'  # Toutes les heures
+  #schedule:
+   # - cron: '0 * * * *'  # Toutes les heures / # Désactivé temporairement en attendant que l'équipe termine l'extraction
   workflow_dispatch:
 jobs:
   deploy:
