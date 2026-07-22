@@ -7,14 +7,11 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch:
 
-env:
-  DOCKER_COMPOSE_VERSION: '2.24.0'
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,11 +20,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get remove -y containerd runc 2>/dev/null || true
-          sudo apt-get install -y docker.io docker-compose-plugin
+          sudo apt-get install -y docker.io
           sudo systemctl start docker
           sudo systemctl enable docker
+          sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
           docker --version
-          docker compose version
+          docker-compose --version
 
       - name: Configure environment variables
         run: |
@@ -42,23 +41,23 @@ jobs:
           EOF
 
       - name: Start Airflow services
-        run: docker compose up -d --wait
+        run: docker-compose up -d
 
       - name: Verify service health
         run: |
-          docker compose ps
+          docker-compose ps
           sleep 10
           curl --fail http://localhost:8080/api/v2/monitor/health || true
 
       - name: Trigger DAG execution
         run: |
-          docker compose exec -T airflow-webserver \
+          docker-compose exec -T airflow-webserver \
             airflow dags trigger aqi_pipeline || true
 
       - name: Display application logs
         if: always()
-        run: docker compose logs --tail 100
+        run: docker-compose logs --tail 100
 
       - name: Cleanup resources
         if: always()
-        run: docker compose down
+        run: docker-compose down
