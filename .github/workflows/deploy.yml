@@ -4,59 +4,61 @@ on:
   push:
     branches: [main, feature/*]
   schedule:
-    - cron: '0 * * * *'  # Toutes les heures
+    - cron: '0 * * * *'
   workflow_dispatch:
+
+env:
+  DOCKER_COMPOSE_VERSION: '2.24.0'
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest  # ← Ubuntu = Debian
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
-      
-      - name: Install Docker on Debian
+
+      - name: Setup Docker environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y docker.io docker-compose
+          sudo apt-get remove -y containerd runc 2>/dev/null || true
+          sudo apt-get install -y docker.io docker-compose-plugin
           sudo systemctl start docker
           sudo systemctl enable docker
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      
-      - name: Create .env file
+          docker --version
+          docker compose version
+
+      - name: Configure environment variables
         run: |
-          echo "OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY }}" > .env
-          echo "AIRFLOW_SECRET_KEY=${{ secrets.AIRFLOW_SECRET_KEY }}" >> .env
-          echo "DB_HOST=postgres" >> .env
-          echo "DB_PORT=5432" >> .env
-          echo "DB_NAME=airflow" >> .env
-          echo "DB_USER=airflow" >> .env
-          echo "DB_PASSWORD=airflow" >> .env
-      
-      - name: Start Airflow with Docker Compose
-        run: |
-          docker compose up -d
-      
-      - name: Wait for Airflow to be ready
-        run: |
-          sleep 45
-      
-      - name: Check container status
+          cat > .env << EOF
+          OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY }}
+          AIRFLOW_SECRET_KEY=${{ secrets.AIRFLOW_SECRET_KEY }}
+          DB_HOST=postgres
+          DB_PORT=5432
+          DB_NAME=airflow
+          DB_USER=airflow
+          DB_PASSWORD=airflow
+          EOF
+
+      - name: Start Airflow services
+        run: docker compose up -d --wait
+
+      - name: Verify service health
         run: |
           docker compose ps
-      
-      - name: Trigger the DAG
+          sleep 10
+          curl --fail http://localhost:8080/api/v2/monitor/health || true
+
+      - name: Trigger DAG execution
         run: |
-          docker compose exec -T airflow-webserver airflow dags trigger aqi_pipeline || true
-      
-      - name: Show logs
+          docker compose exec -T airflow-webserver \
+            airflow dags trigger aqi_pipeline || true
+
+      - name: Display application logs
         if: always()
-        run: |
-          docker compose logs --tail 100
-      
-      - name: Clean up
+        run: docker compose logs --tail 100
+
+      - name: Cleanup resources
         if: always()
-        run: |
-          docker compose down
+        run: docker compose down
