@@ -1,0 +1,49 @@
+name: Deploy Airflow Pipeline
+on:
+  push:
+    branches: [main, feature/*]
+  #schedule:
+   # - cron: '0 * * * *'  # Toutes les heures / # Désactivé temporairement en attendant que l'équipe termine l'extraction
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create .env file
+        run: |
+          echo "OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY }}" > .env
+          echo "AIRFLOW_SECRET_KEY=${{ secrets.AIRFLOW_SECRET_KEY }}" >> .env
+          echo "DB_HOST=postgres" >> .env
+          echo "DB_PORT=5432" >> .env
+          echo "DB_NAME=airflow" >> .env
+          echo "DB_USER=airflow" >> .env
+          echo "DB_PASSWORD=airflow" >> .env
+
+      - name: Start Airflow with Docker Compose
+        run: |
+          docker compose up -d --wait --wait-timeout 180
+
+      - name: Check container status
+        run: |
+          docker compose ps
+
+      - name: Trigger the DAG
+        run: |
+          docker compose exec -T airflow-webserver airflow dags trigger aqi_pipeline || true
+
+      - name: Show logs
+        if: always()
+        run: |
+          docker compose logs --tail 100
+
+      - name: Clean up
+        if: always()
+        run: |
+          docker compose down
