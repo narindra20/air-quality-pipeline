@@ -1,30 +1,3 @@
-"""
-build_clean.py
----------------
-Reconstruit clean/ ENTIEREMENT depuis raw/.
-Responsable : hei.alpha.7 (KAN-13/KAN-14).
-
-- Parcourt tous les fichiers JSON dans raw/ (recursif)
-- Consolide en un seul CSV
-- Deduplique (ville + heure)
-- Trie chronologiquement
-- Ne modifie jamais raw/
-
-FORMAT JSON ATTENDU EN ENTREE (celui produit par scripts/extraction/extract_aqi.py) :
-
-    {
-      "city": "...", "country": "...", "lat": ..., "lon": ...,
-      "timestamp": <unix_timestamp>,
-      "aqi": <int>,
-      "components": {"co": ..., "no": ..., "no2": ..., "o3": ..., "so2": ...,
-                      "pm2_5": ..., "pm10": ..., "nh3": ...}
-    }
-
-Un fichier = une mesure. Arborescence sous raw/ :
-    data/raw/ville=<Nom>/<annee>/<mois>/<jour>/<heure>/raw_<YYYYMMDD_HH>.json
-(peu importe la profondeur exacte : on parcourt en recursif avec rglob)
-"""
-
 import json
 import os
 from pathlib import Path
