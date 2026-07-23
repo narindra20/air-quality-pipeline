@@ -162,10 +162,10 @@ if __name__ == "__main__":
         for ville in villes:
             extract_city_history(ville, api_key, three_months_ago, now)
             time.sleep(1)
-        logger.info("=== Backfill termine avec succes ===")
+        logger.info("== Backfill termine avec succes ==")
 
     elif args.mode == "current":
-        logger.info("=== Debut de l'extraction courante ===")
+        logger.info("== Debut de l'extraction courante ==")
         for ville in villes:
             extract_city(ville, api_key)
-        logger.info("=== Extraction courante terminee avec succes ===")
+        logger.info("== Extraction courante terminee avec succes ==")
