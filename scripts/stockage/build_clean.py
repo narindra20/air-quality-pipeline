@@ -1,103 +1,106 @@
 """
 build_clean.py
 ---------------
-Reconstruit ENTIÈREMENT clean/air_quality_clean.csv à partir de raw/.
-Ne lit jamais rien d'autre que raw/, n'écrit jamais dans raw/.
+Reconstruit clean/ ENTIEREMENT depuis raw/.
+Responsable : hei.alpha.7 (KAN-13/KAN-14).
 
-Règles appliquées :
-  - une ligne par (ville, heure)
-  - triée chronologiquement (ville puis horodatage)
-  - dédoublonnée : si plusieurs fichiers raw contiennent la même
-    (ville, heure) -- normal, la collecte horaire et le backfill peuvent se
-    recouper -- on ne garde qu'une seule ligne.
+- Parcourt tous les fichiers JSON dans raw/ (recursif)
+- Consolide en un seul CSV
+- Deduplique (ville + heure)
+- Trie chronologiquement
+- Ne modifie jamais raw/
 
-Usage :
-    python scripts/stockage/build_clean.py
+FORMAT JSON ATTENDU EN ENTREE (celui produit par scripts/extraction/extract_aqi.py) :
+
+    {
+      "city": "...", "country": "...", "lat": ..., "lon": ...,
+      "timestamp": <unix_timestamp>,
+      "aqi": <int>,
+      "components": {"co": ..., "no": ..., "no2": ..., "o3": ..., "so2": ...,
+                      "pm2_5": ..., "pm10": ..., "nh3": ...}
+    }
+
+Un fichier = une mesure. Arborescence sous raw/ :
+    data/raw/ville=<Nom>/<annee>/<mois>/<jour>/<heure>/raw_<YYYYMMDD_HH>.json
+(peu importe la profondeur exacte : on parcourt en recursif avec rglob)
 """
 
-import csv
 import json
-from datetime import datetime, timezone
+import os
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent.parent  # racine du repo
-RAW_DIR = ROOT / "raw"
-CLEAN_DIR = ROOT / "clean"
-CLEAN_FILE = CLEAN_DIR / "air_quality_clean.csv"
+import pandas as pd
 
-FIELDNAMES = [
-    "city", "country", "latitude", "longitude",
-    "timestamp_utc",
-    "aqi",
-    "co", "no", "no2", "o3", "so2", "pm2_5", "pm10", "nh3",
-]
+POLLUTANTS = ["co", "no", "no2", "o3", "so2", "pm2_5", "pm10", "nh3"]
 
 
-def iter_raw_files():
-    if not RAW_DIR.exists():
-        return
-    yield from sorted(RAW_DIR.glob("*/*.json"))
+def _default_dir(env_var: str, airflow_path: str, local_path: str) -> Path:
+    """Utilise la variable d'env si definie, sinon detecte si on tourne dans
+    le conteneur Airflow (/opt/airflow existe) ou en local."""
+    if os.environ.get(env_var):
+        return Path(os.environ[env_var])
+    if Path("/opt/airflow").exists():
+        return Path(airflow_path)
+    return Path(local_path)
 
 
-def extract_rows(raw_record: dict):
-    """Un fichier raw peut contenir 1 (collecte horaire) ou N (backfill)
-    mesures dans raw_response.list. On les extrait toutes."""
-    rows = []
-    payload = raw_record.get("raw_response", {})
-    for entry in payload.get("list", []):
-        dt_unix = entry.get("dt")
-        if dt_unix is None:
-            continue
-        ts = datetime.fromtimestamp(dt_unix, tz=timezone.utc).isoformat()
-        components = entry.get("components", {})
-        rows.append({
-            "city": raw_record["city"],
-            "country": raw_record["country"],
-            "latitude": raw_record["lat"],
-            "longitude": raw_record["lon"],
-            "timestamp_utc": ts,
-            "aqi": entry.get("main", {}).get("aqi"),
-            "co": components.get("co"),
-            "no": components.get("no"),
-            "no2": components.get("no2"),
-            "o3": components.get("o3"),
-            "so2": components.get("so2"),
-            "pm2_5": components.get("pm2_5"),
-            "pm10": components.get("pm10"),
-            "nh3": components.get("nh3"),
-        })
-    return rows
+def _extract_record(raw_path: Path) -> dict | None:
+    """Un fichier raw = une seule mesure (format plat)."""
+    with open(raw_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if "timestamp" not in data or "aqi" not in data:
+        return None
+
+    components = data.get("components", {})
+    record = {
+        "city": data["city"],
+        "country": data["country"],
+        "lat": data["lat"],
+        "lon": data["lon"],
+        "timestamp": data["timestamp"],
+        "aqi": data["aqi"],
+    }
+    for pollutant in POLLUTANTS:
+        record[pollutant] = components.get(pollutant)
+    return record
 
 
-def main():
-    dedup = {}  # (city, timestamp_utc) -> row  (dernier fichier lu gagne)
+def build_clean() -> str:
+    """
+    Reconstruit clean/ entierement depuis raw/.
 
-    n_files = 0
-    for raw_path in iter_raw_files():
-        n_files += 1
+    Returns:
+        str: Chemin du fichier CSV clean genere
+    """
+    raw_dir = _default_dir("RAW_DIR", "/opt/airflow/raw", "raw")
+    clean_dir = _default_dir("CLEAN_DIR", "/opt/airflow/clean", "clean")
+    clean_dir.mkdir(parents=True, exist_ok=True)
+
+    all_records = []
+    for json_file in raw_dir.rglob("*.json"):
         try:
-            with open(raw_path, encoding="utf-8") as f:
-                raw_record = json.load(f)
-        except json.JSONDecodeError:
-            print(f"[SKIP] {raw_path} : JSON invalide")
-            continue
+            record = _extract_record(json_file)
+            if record:
+                all_records.append(record)
+        except (KeyError, json.JSONDecodeError) as e:
+            print(f" Erreur lecture {json_file}: {e}")
 
-        for row in extract_rows(raw_record):
-            key = (row["city"], row["timestamp_utc"])
-            dedup[key] = row
+    if not all_records:
+        raise ValueError("Aucune donnee trouvee dans raw/")
 
-    rows = sorted(dedup.values(), key=lambda r: (r["city"], r["timestamp_utc"]))
+    df = pd.DataFrame(all_records)
 
-    CLEAN_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CLEAN_FILE, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
-        writer.writeheader()
-        writer.writerows(rows)
+    df = df.drop_duplicates(subset=["city", "timestamp"], keep="last")
 
-    print(f"Fichiers raw lus     : {n_files}")
-    print(f"Lignes clean écrites : {len(rows)}")
-    print(f"Fichier généré       : {CLEAN_FILE.relative_to(ROOT)}")
+    df = df.sort_values(["city", "timestamp"])
+
+    clean_path = clean_dir / "air_quality_clean.csv"
+    df.to_csv(clean_path, index=False, encoding="utf-8")
+
+    print(f" Clean genere : {clean_path} ({len(df)} lignes)")
+    return str(clean_path)
 
 
 if __name__ == "__main__":
-    main()
+    build_clean()

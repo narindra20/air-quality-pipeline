@@ -1,195 +1,178 @@
-# TODO: OpenWeather API extraction script (backfill + hourly)
-"""
-extract_aqi.py
----------------
-Collecte des données de qualité de l'air (OpenWeatherMap Air Pollution API)
-pour les 5 villes définies dans cities.json.
-
-Deux modes :
-
-  --mode current    : un appel "maintenant" par ville (collecte horaire,
-                       pensé pour être rejoué toutes les heures par le DAG).
-  --mode backfill    : historique sur une période donnée, découpé en
-                       tranches de 7 jours (un appel = une tranche = 1 ville).
-
-Dans les deux cas : un fichier brut = un appel API = une ville, écrit dans
-raw/<slug_ville>/... . raw/ n'est JAMAIS modifié après écriture (append-only,
-c'est notre sauvegarde). clean/ est reconstruit à part par
-scripts/stockage/build_clean.py.
-
-Usage :
-    export OWM_API_KEY="votre_cle"          # jamais en dur dans le code
-    python scripts/extraction/extract_aqi.py --mode current
-    python scripts/extraction/extract_aqi.py --mode backfill --months 3
-    python scripts/extraction/extract_aqi.py --mode backfill --start 2025-07-01 --end 2026-07-01
-"""
-
-import argparse
-import json
 import os
 import sys
+import json
 import time
-from datetime import datetime, timedelta, timezone
+import logging
+import argparse
+from datetime import datetime
 from pathlib import Path
-from urllib.request import urlopen
-from urllib.error import URLError, HTTPError
+import requests
+from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parent.parent.parent  # racine du repo
-CITIES_FILE = Path(__file__).resolve().parent / "cities.json"
-RAW_DIR = ROOT / "raw"
+load_dotenv()
 
-CURRENT_URL = "http://api.openweathermap.org/data/2.5/air_pollution"
-HISTORY_URL = "http://api.openweathermap.org/data/2.5/air_pollution/history"
-CHUNK_DAYS = 7
-EARLIEST_AVAILABLE = datetime(2020, 11, 27, tzinfo=timezone.utc)
-
-
-def get_api_key() -> str:
-    """La clé ne doit JAMAIS être écrite en dur : uniquement via variable
-    d'environnement / secret (OWM_API_KEY)."""
-    key = os.environ.get("OWM_API_KEY")
-    if not key:
-        sys.exit("Erreur : variable d'environnement OWM_API_KEY manquante.")
-    return key
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("extract_aqi")
 
 
-def load_cities():
-    with open(CITIES_FILE, encoding="utf-8") as f:
-        return json.load(f)
+def _raw_base_dir() -> Path:
+    """Chemin de raw/ : conteneur Airflow si présent, sinon local.
+    Utilisé par les DEUX fonctions d'extraction (current et history) pour
+    éviter toute divergence entre elles."""
+    return Path("/opt/airflow/data/raw") if Path("/opt/airflow").exists() else Path("data/raw")
 
 
-def save_raw(city: dict, payload: dict, source: str, filename: str, extra: dict | None = None):
-    city_dir = RAW_DIR / city["slug"]
-    city_dir.mkdir(parents=True, exist_ok=True)
-    out_path = city_dir / filename
+def extract_city(ville: dict, api_key: str, execution_date: str = None) -> str:
+    nom_ville = ville.get("ville") or ville.get("nom") or ville.get("name", "inconnue")
+    pays = ville.get("pays", "France")
+    lat = ville.get("lat")
+    lon = ville.get("lon")
 
-    record = {
-        "city": city["city"],
-        "slug": city["slug"],
-        "country": city["country"],
-        "lat": city["lat"],
-        "lon": city["lon"],
-        "fetched_at_utc": datetime.now(timezone.utc).isoformat(),
-        "source": source,
-        "raw_response": payload,
+    url = "http://api.openweathermap.org/data/2.5/air_pollution"
+    params = {
+        "lat": lat,
+        "lon": lon,
+        "appid": api_key
     }
-    if extra:
-        record.update(extra)
 
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(record, f, ensure_ascii=False, indent=2)
-    return out_path
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
 
+        raw_data = {
+            "city": nom_ville,
+            "country": pays,
+            "lat": lat,
+            "lon": lon,
+            "timestamp": data["list"][0]["dt"],
+            "aqi": data["list"][0]["main"]["aqi"],
+            "components": data["list"][0]["components"]
+        }
 
-# ---------------------------------------------------------------------------
-# Mode "current" : collecte horaire
-# ---------------------------------------------------------------------------
+        base_dir = _raw_base_dir()
 
-def run_current(cities, api_key):
-    now = datetime.now(timezone.utc)
-    ok, failed = 0, 0
+        dt = datetime.fromtimestamp(data["list"][0]["dt"])
+        raw_path = (
+            base_dir
+            / f"ville={nom_ville}"
+            / str(dt.year)
+            / f"{dt.month:02d}"
+            / f"{dt.day:02d}"
+            / f"{dt.hour:02d}"
+        )
+        raw_path.mkdir(parents=True, exist_ok=True)
 
-    for city in cities:
-        url = f"{CURRENT_URL}?lat={city['lat']}&lon={city['lon']}&appid={api_key}"
-        try:
-            with urlopen(url, timeout=15) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-            stamp = now.strftime("%Y%m%dT%H%M%SZ")
-            path = save_raw(city, payload, "openweathermap_air_pollution_current",
-                             f"{city['slug']}_{stamp}.json")
-            print(f"[OK]   {city['city']:<15} -> {path.relative_to(ROOT)}")
-            ok += 1
-        except (URLError, HTTPError) as e:
-            print(f"[FAIL] {city['city']:<15} -> erreur réseau/API : {e}")
-            failed += 1
-        except Exception as e:
-            print(f"[FAIL] {city['city']:<15} -> erreur inattendue : {e}")
-            failed += 1
-        time.sleep(1)
+        filename = f"raw_{dt.strftime('%Y%m%d_%H')}.json"
+        full_path = raw_path / filename
 
-    print(f"\nTerminé (current) : {ok} succès, {failed} échec(s) sur {len(cities)} villes.")
-    if failed == len(cities):
-        sys.exit(1)
+        with open(full_path, "w", encoding="utf-8") as f:
+            json.dump(raw_data, f, indent=2, ensure_ascii=False)
 
+        logger.info(f"Extrait : {nom_ville} -> {full_path}")
+        return str(full_path)
 
-# ---------------------------------------------------------------------------
-# Mode "backfill" : historique
-# ---------------------------------------------------------------------------
-
-def daterange_chunks(start: datetime, end: datetime, days: int):
-    cur = start
-    while cur < end:
-        nxt = min(cur + timedelta(days=days), end)
-        yield cur, nxt
-        cur = nxt
+    except Exception as e:
+        logger.error(f"Erreur lors de l'extraction pour {nom_ville}: {e}")
+        raise
 
 
-def run_backfill(cities, api_key, months: int, start_arg: str | None, end_arg: str | None):
-    end = (datetime.strptime(end_arg, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-           if end_arg else datetime.now(timezone.utc))
-    if start_arg:
-        start = datetime.strptime(start_arg, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    else:
-        start = end - timedelta(days=30 * months)
-    start = max(start, EARLIEST_AVAILABLE)
+def extract_city_history(ville: dict, api_key: str, start_ts: int, end_ts: int) -> None:
+    nom_ville = ville.get("ville") or ville.get("nom") or ville.get("name", "inconnue")
+    pays = ville.get("pays", "France")
+    lat = ville.get("lat")
+    lon = ville.get("lon")
 
-    if start >= end:
-        sys.exit("Erreur : la date de début doit être avant la date de fin.")
+    url = "http://api.openweathermap.org/data/2.5/air_pollution/history"
+    params = {
+        "lat": lat,
+        "lon": lon,
+        "start": start_ts,
+        "end": end_ts,
+        "appid": api_key
+    }
 
-    print(f"Backfill du {start.date()} au {end.date()} pour {len(cities)} ville(s)\n")
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
 
-    total, skipped, ok, failed = 0, 0, 0, 0
-    for city in cities:
-        for c_start, c_end in daterange_chunks(start, end, CHUNK_DAYS):
-            total += 1
-            stamp_start = c_start.strftime("%Y%m%dT%H%M%SZ")
-            stamp_end = c_end.strftime("%Y%m%dT%H%M%SZ")
-            filename = f"{city['slug']}_backfill_{stamp_start}_{stamp_end}.json"
-            expected = RAW_DIR / city["slug"] / filename
-            if expected.exists():
-                skipped += 1
-                continue
+        base_dir = _raw_base_dir()  # <- BUG corrigé : avant, ne vérifiait pas /opt/airflow
+        records = data.get("list", [])
 
-            url = (f"{HISTORY_URL}?lat={city['lat']}&lon={city['lon']}"
-                   f"&start={int(c_start.timestamp())}&end={int(c_end.timestamp())}"
-                   f"&appid={api_key}")
-            try:
-                with urlopen(url, timeout=30) as resp:
-                    payload = json.loads(resp.read().decode("utf-8"))
-                save_raw(city, payload, "openweathermap_air_pollution_history", filename,
-                          extra={"window_start_utc": c_start.isoformat(),
-                                 "window_end_utc": c_end.isoformat()})
-                print(f"[OK]   {city['city']:<15} {c_start.date()} -> {c_end.date()}")
-                ok += 1
-            except (URLError, HTTPError) as e:
-                print(f"[FAIL] {city['city']:<15} {c_start.date()} -> {c_end.date()} : {e}")
-                failed += 1
-            except Exception as e:
-                print(f"[FAIL] {city['city']:<15} {c_start.date()} -> {c_end.date()} : {e}")
-                failed += 1
-            time.sleep(0.5)
+        for item in records:
+            raw_data = {
+                "city": nom_ville,
+                "country": pays,
+                "lat": lat,
+                "lon": lon,
+                "timestamp": item["dt"],
+                "aqi": item["main"]["aqi"],
+                "components": item["components"]
+            }
 
-    print(f"\nTerminé (backfill) : {ok} succès, {skipped} déjà présents, {failed} échec(s) sur {total} appels prévus.")
+            dt = datetime.fromtimestamp(item["dt"])
+            raw_path = (
+                base_dir
+                / f"ville={nom_ville}"
+                / str(dt.year)
+                / f"{dt.month:02d}"
+                / f"{dt.day:02d}"
+                / f"{dt.hour:02d}"
+            )
+            raw_path.mkdir(parents=True, exist_ok=True)
 
+            filename = f"raw_{dt.strftime('%Y%m%d_%H')}.json"
+            full_path = raw_path / filename
 
-# ---------------------------------------------------------------------------
+            with open(full_path, "w", encoding="utf-8") as f:
+                json.dump(raw_data, f, indent=2, ensure_ascii=False)
 
-def main():
-    parser = argparse.ArgumentParser(description="Extraction AQI (OpenWeatherMap)")
-    parser.add_argument("--mode", choices=["current", "backfill"], required=True)
-    parser.add_argument("--months", type=int, default=3, help="Backfill : nb de mois (défaut 3, mini imposé)")
-    parser.add_argument("--start", type=str, help="Backfill : date de début YYYY-MM-DD")
-    parser.add_argument("--end", type=str, help="Backfill : date de fin YYYY-MM-DD")
-    args = parser.parse_args()
+        logger.info(f"Backfill termine pour {nom_ville} ({len(records)} enregistrements enregistres).")
 
-    api_key = get_api_key()
-    cities = load_cities()
-
-    if args.mode == "current":
-        run_current(cities, api_key)
-    else:
-        run_backfill(cities, api_key, args.months, args.start, args.end)
+    except Exception as e:
+        logger.error(f"Erreur lors du backfill pour {nom_ville}: {e}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Script d'extraction des donnees AQI")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["backfill", "current"],
+        default="backfill",
+        help="Mode d'extraction ('backfill' pour l'historique de 3 mois, 'current' pour l'instant T)"
+    )
+    args = parser.parse_args()
+
+    api_key = os.environ.get("OPENWEATHER_API_KEY")
+    if not api_key:
+        logger.error("ERREUR : La variable OPENWEATHER_API_KEY est introuvable dans l'environnement / fichier .env.")
+        sys.exit(1)
+
+    villes_path = Path("config/villes.json")
+    if villes_path.exists():
+        with open(villes_path, encoding="utf-8") as f:
+            villes = json.load(f)
+    else:
+        logger.error(f"Fichier de configuration {villes_path} introuvable.")
+        sys.exit(1)
+
+    if args.mode == "backfill":
+        now = int(time.time())
+        three_months_ago = now - (90 * 24 * 3600)
+        logger.info("=== Debut de l'extraction Backfill (3 mois) ===")
+        for ville in villes:
+            extract_city_history(ville, api_key, three_months_ago, now)
+            time.sleep(1)
+        logger.info("== Backfill termine avec succes ==")
+
+    elif args.mode == "current":
+        logger.info("== Debut de l'extraction courante ==")
+        for ville in villes:
+            extract_city(ville, api_key)
+        logger.info("== Extraction courante terminee avec succes ==")
