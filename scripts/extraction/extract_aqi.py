@@ -19,13 +19,6 @@ logging.basicConfig(
 logger = logging.getLogger("extract_aqi")
 
 
-def _raw_base_dir() -> Path:
-    """Chemin de raw/ : conteneur Airflow si présent, sinon local.
-    Utilisé par les DEUX fonctions d'extraction (current et history) pour
-    éviter toute divergence entre elles."""
-    return Path("/opt/airflow/data/raw") if Path("/opt/airflow").exists() else Path("data/raw")
-
-
 def extract_city(ville: dict, api_key: str, execution_date: str = None) -> str:
     nom_ville = ville.get("ville") or ville.get("nom") or ville.get("name", "inconnue")
     pays = ville.get("pays", "France")
@@ -54,16 +47,16 @@ def extract_city(ville: dict, api_key: str, execution_date: str = None) -> str:
             "components": data["list"][0]["components"]
         }
 
-        base_dir = _raw_base_dir()
+        base_dir = Path("/opt/airflow/raw") if Path("/opt/airflow").exists() else Path("raw")
 
         dt = datetime.fromtimestamp(data["list"][0]["dt"])
         raw_path = (
-            base_dir
-            / f"ville={nom_ville}"
-            / str(dt.year)
-            / f"{dt.month:02d}"
-            / f"{dt.day:02d}"
-            / f"{dt.hour:02d}"
+                base_dir
+                / f"ville={nom_ville}"
+                / str(dt.year)
+                / f"{dt.month:02d}"
+                / f"{dt.day:02d}"
+                / f"{dt.hour:02d}"
         )
         raw_path.mkdir(parents=True, exist_ok=True)
 
@@ -73,7 +66,7 @@ def extract_city(ville: dict, api_key: str, execution_date: str = None) -> str:
         with open(full_path, "w", encoding="utf-8") as f:
             json.dump(raw_data, f, indent=2, ensure_ascii=False)
 
-        logger.info(f"Extrait : {nom_ville} -> {full_path}")
+        logger.info(f"Extrait : {nom_ville} → {full_path}")
         return str(full_path)
 
     except Exception as e:
@@ -81,7 +74,7 @@ def extract_city(ville: dict, api_key: str, execution_date: str = None) -> str:
         raise
 
 
-def extract_city_history(ville: dict, api_key: str, start_ts: int, end_ts: int) -> None:
+def extract_city_history(ville: dict, api_key: str, start_ts: int, end_ts: int, max_retries: int = 3) -> None:
     nom_ville = ville.get("ville") or ville.get("nom") or ville.get("name", "inconnue")
     pays = ville.get("pays", "France")
     lat = ville.get("lat")
@@ -96,50 +89,59 @@ def extract_city_history(ville: dict, api_key: str, start_ts: int, end_ts: int) 
         "appid": api_key
     }
 
-    try:
-        response = requests.get(url, params=params, timeout=30)
-        response.raise_for_status()
-        data = response.json()
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.get(url, params=params, timeout=60)
+            response.raise_for_status()
+            data = response.json()
 
-        base_dir = _raw_base_dir()  # <- BUG corrigé : avant, ne vérifiait pas /opt/airflow
-        records = data.get("list", [])
+            base_dir = Path("/opt/airflow/raw") if Path("/opt/airflow").exists() else Path("raw")
+            records = data.get("list", [])
 
-        for item in records:
-            raw_data = {
-                "city": nom_ville,
-                "country": pays,
-                "lat": lat,
-                "lon": lon,
-                "timestamp": item["dt"],
-                "aqi": item["main"]["aqi"],
-                "components": item["components"]
-            }
+            for item in records:
+                raw_data = {
+                    "city": nom_ville,
+                    "country": pays,
+                    "lat": lat,
+                    "lon": lon,
+                    "timestamp": item["dt"],
+                    "aqi": item["main"]["aqi"],
+                    "components": item["components"]
+                }
 
-            dt = datetime.fromtimestamp(item["dt"])
-            raw_path = (
-                base_dir
-                / f"ville={nom_ville}"
-                / str(dt.year)
-                / f"{dt.month:02d}"
-                / f"{dt.day:02d}"
-                / f"{dt.hour:02d}"
-            )
-            raw_path.mkdir(parents=True, exist_ok=True)
+                dt = datetime.fromtimestamp(item["dt"])
+                raw_path = (
+                        base_dir
+                        / f"ville={nom_ville}"
+                        / str(dt.year)
+                        / f"{dt.month:02d}"
+                        / f"{dt.day:02d}"
+                        / f"{dt.hour:02d}"
+                )
+                raw_path.mkdir(parents=True, exist_ok=True)
 
-            filename = f"raw_{dt.strftime('%Y%m%d_%H')}.json"
-            full_path = raw_path / filename
+                filename = f"raw_{dt.strftime('%Y%m%d_%H')}.json"
+                full_path = raw_path / filename
 
-            with open(full_path, "w", encoding="utf-8") as f:
-                json.dump(raw_data, f, indent=2, ensure_ascii=False)
+                with open(full_path, "w", encoding="utf-8") as f:
+                    json.dump(raw_data, f, indent=2, ensure_ascii=False)
 
-        logger.info(f"Backfill termine pour {nom_ville} ({len(records)} enregistrements enregistres).")
+            logger.info(f"Backfill terminé pour {nom_ville} ({len(records)} enregistrements enregistrés).")
+            return
 
-    except Exception as e:
-        logger.error(f"Erreur lors du backfill pour {nom_ville}: {e}")
+        except requests.exceptions.Timeout:
+            logger.warning(f"Timeout pour {nom_ville} (tentative {attempt}/{max_retries}).")
+            if attempt < max_retries:
+                time.sleep(5)
+            else:
+                logger.error(f"Échec définitif pour {nom_ville} après {max_retries} tentatives (timeout).")
+        except Exception as e:
+            logger.error(f"Erreur lors du backfill pour {nom_ville}: {e}")
+            return
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Script d'extraction des donnees AQI")
+    parser = argparse.ArgumentParser(description="Script d'extraction des données AQI")
     parser.add_argument(
         "--mode",
         type=str,
