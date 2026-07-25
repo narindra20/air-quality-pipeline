@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from airflow.decorators import dag, task
-from airflow.models import Variable
 
 VILLES_CONFIG_PATH = Path("/opt/airflow/config/villes.json")
 
@@ -37,7 +37,7 @@ def aqi_pipeline():
     def extract_one_ville(ville: dict, execution_date=None) -> str:
         from scripts.extraction.extract_aqi import extract_city
 
-        api_key = Variable.get("OPENWEATHER_API_KEY")
+        api_key = os.environ["OPENWEATHER_API_KEY"]
         return extract_city(
             ville=ville,
             api_key=api_key,
