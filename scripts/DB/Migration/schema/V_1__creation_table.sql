@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS dim_city (
     latitude NUMERIC(8, 4) NOT NULL,
     longitude NUMERIC(8, 4) NOT NULL
     );
-
+--
 CREATE TABLE IF NOT EXISTS dim_time (
                                         time_id VARCHAR(13) PRIMARY KEY, -- Format: YYYY-MM-DD-HH
     timestamp_utc TIMESTAMP NOT NULL,
