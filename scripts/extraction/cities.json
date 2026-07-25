@@ -1,7 +1,0 @@
-[
-  {"city": "Antananarivo", "slug": "antananarivo", "country": "MG", "lat": -18.8792, "lon": 47.5079},
-  {"city": "Paris",        "slug": "paris",        "country": "FR", "lat": 48.8566,  "lon": 2.3522},
-  {"city": "New Delhi",    "slug": "new_delhi",    "country": "IN", "lat": 28.6139,  "lon": 77.2090},
-  {"city": "Beijing",      "slug": "beijing",      "country": "CN", "lat": 39.9042,  "lon": 116.4074},
-  {"city": "Sao Paulo",    "slug": "sao_paulo",    "country": "BR", "lat": -23.5505, "lon": -46.6333}
-]

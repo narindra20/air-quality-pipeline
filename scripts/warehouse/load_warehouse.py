@@ -157,5 +157,5 @@ def load_warehouse(clean_csv_path: str = DEFAULT_CLEAN_CSV_PATH) -> None:
         conn.close()
 
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     load_warehouse()
