@@ -19,6 +19,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Fix permissions for mounted volumes
+        run: |
+          mkdir -p raw clean logs plugins docs config
+          sudo chown -R 50000:0 raw clean logs plugins docs config
+          sudo chmod -R 775 raw clean logs plugins docs config
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -28,6 +34,19 @@ jobs:
           echo "DATABASE_URL=${{ secrets.NEON_DATABASE_URL }}" >> .env
           echo "DATABASE_URL_WRITER=${{ secrets.NEON_DATABASE_URL_WRITER }}" >> .env
           echo "AIRFLOW_UID=50000" >> .env
+
+      - name: Build image with cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: |
+            air-quality-pipeline-airflow-scheduler:latest
+            air-quality-pipeline-airflow-init:latest
+            air-quality-pipeline-airflow-webserver:latest
+            air-quality-pipeline-pipeline:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Start Airflow with Docker Compose
         run: |
