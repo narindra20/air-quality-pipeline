@@ -6,15 +6,13 @@ x-airflow-common:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'false'
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    PYTHONPATH: /opt/airflow
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
     OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY}
-    DB_HOST: ${DB_HOST}
-    DB_PORT: ${DB_PORT}
-    DB_NAME: ${DB_NAME}
-    DB_USER: ${DB_USER}
-    DB_PASSWORD: ${DB_PASSWORD}
+    DATABASE_URL: ${DATABASE_URL}
+    DATABASE_URL_WRITER: ${DATABASE_URL_WRITER}
   volumes:
     - ./dags:/opt/airflow/dags
     - ./scripts:/opt/airflow/scripts
@@ -23,6 +21,7 @@ x-airflow-common:
     - ./raw:/opt/airflow/raw
     - ./clean:/opt/airflow/clean
     - ./docs:/opt/airflow/docs
+    - ./config:/opt/airflow/config
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
