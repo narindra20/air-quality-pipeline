@@ -1,14 +1,20 @@
-name: Deploy Airflow Pipeline
-on:
-  push:
-    branches: [main, feature/*]
-  #schedule:
-   # - cron: '0 * * * *'  # Toutes les heures / # Désactivé temporairement en attendant que l'équipe termine l'extraction
-  workflow_dispatch:
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
+name: AQI Pipeline (Airflow via Docker)
 
+on:
+  schedule:
+    - cron: '5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aqi-pipeline
+  cancel-in-progress: false
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -18,13 +24,9 @@ jobs:
 
       - name: Create .env file
         run: |
-          echo "OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY }}" > .env
-          echo "AIRFLOW_SECRET_KEY=${{ secrets.AIRFLOW_SECRET_KEY }}" >> .env
-          echo "DB_HOST=postgres" >> .env
-          echo "DB_PORT=5432" >> .env
-          echo "DB_NAME=airflow" >> .env
-          echo "DB_USER=airflow" >> .env
-          echo "DB_PASSWORD=airflow" >> .env
+          echo "OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY }}" >> .env
+          echo "DATABASE_URL=${{ secrets.NEON_DATABASE_URL }}" >> .env
+          echo "AIRFLOW_UID=50000" >> .env
 
       - name: Start Airflow with Docker Compose
         run: |
@@ -34,16 +36,26 @@ jobs:
         run: |
           docker compose ps
 
-      - name: Trigger the DAG
+      - name: Run DAG synchronously
         run: |
-          docker compose exec -T airflow-webserver airflow dags trigger aqi_pipeline || true
+          docker compose exec -T airflow-webserver \
+            airflow dags test aqi_pipeline "$(date -u +'%Y-%m-%d')"
+
+      - name: Commit raw/ et clean/ produits par le run
+        run: |
+          git config user.name "aqi-bot"
+          git config user.email "aqi-bot@users.noreply.github.com"
+          git add raw/ clean/
+          git diff --staged --quiet || git commit -m "chore: collecte auto $(date -u +'%Y-%m-%dT%H:%M')"
+          git pull --rebase
+          git push
 
       - name: Show logs
         if: always()
         run: |
-          docker compose logs --tail 100
+          docker compose logs --tail 200
 
       - name: Clean up
         if: always()
         run: |
-          docker compose down
+          docker compose down -v
