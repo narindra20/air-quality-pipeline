@@ -27,7 +27,6 @@ x-airflow-common:
     &airflow-common-depends-on
     postgres:
       condition: service_healthy
-
 services:
   postgres:
     image: postgres:13.9
@@ -43,7 +42,6 @@ services:
       retries: 5
       start_period: 5s
     restart: always
-
   airflow-init:
     <<: *airflow-common
     entrypoint: /bin/bash
@@ -58,7 +56,6 @@ services:
           --role Admin --email admin@example.com
     depends_on:
       <<: *airflow-common-depends-on
-
   airflow-webserver:
     <<: *airflow-common
     command: api-server
@@ -74,7 +71,6 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
-
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
@@ -88,6 +84,17 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
-
+  pipeline:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        python /opt/airflow/scripts/extraction/extract_aqi.py
+        python /opt/airflow/scripts/stockage/build_clean.py
+        python /opt/airflow/scripts/warehouse/load_warehouse.py
+    depends_on:
+      <<: *airflow-common-depends-on
 volumes:
   postgres-db-volume:
