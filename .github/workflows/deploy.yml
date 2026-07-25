@@ -61,12 +61,12 @@ jobs:
           docker compose exec -T airflow-webserver \
             airflow dags test aqi_pipeline "$(date -u +'%Y-%m-%d')"
 
-      - name: Commit clean/ produit par le run
+      - name: Commit raw/ et clean/ produits par le run
         run: |
           git config user.name "aqi-bot"
           git config user.email "aqi-bot@users.noreply.github.com"
-          git add clean/
-          git diff --staged --quiet || git commit -m "chore: sync clean $(date -u +'%Y-%m-%dT%H:%M')"
+          git add raw/ clean/
+          git diff --staged --quiet || git commit -m "chore: sync raw+clean $(date -u +'%Y-%m-%dT%H:%M')"
           git pull --rebase
           git push
 
