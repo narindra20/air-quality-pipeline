@@ -65,6 +65,7 @@ jobs:
         run: |
           git config user.name "aqi-bot"
           git config user.email "aqi-bot@users.noreply.github.com"
+          git config core.fileMode false
           git add raw/ clean/
           git diff --staged --quiet || git commit -m "chore: sync raw+clean $(date -u +'%Y-%m-%dT%H:%M')"
           git pull --rebase
