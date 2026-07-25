@@ -26,7 +26,7 @@ jobs:
         run: |
           echo "OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY }}" >> .env
           echo "DATABASE_URL=${{ secrets.NEON_DATABASE_URL }}" >> .env
-          echo "DATABASE_URL_WRITER=${{ secrets.NEON_DATABASE_URL }}" >> .env
+          echo "DATABASE_URL_WRITER=${{ secrets.NEON_DATABASE_URL_WRITER }}" >> .env
           echo "AIRFLOW_UID=50000" >> .env
 
       - name: Start Airflow with Docker Compose
