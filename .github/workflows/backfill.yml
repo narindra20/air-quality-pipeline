@@ -3,14 +3,10 @@ name: AQI Backfill Pipeline (Airflow via Docker)
 on:
   workflow_dispatch:
     inputs:
-      start_date:
-        description: "Date de début (YYYY-MM-DD)"
+      months:
+        description: "Nombre de mois d'historique à récupérer"
         required: true
-        default: "2025-07-27"
-      end_date:
-        description: "Date de fin (YYYY-MM-DD, exclusive pour Airflow)"
-        required: true
-        default: "2026-07-27"
+        default: "12"
 
 permissions:
   contents: write
