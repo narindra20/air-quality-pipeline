@@ -7,6 +7,11 @@ on:
         description: "Nombre de mois d'historique à récupérer"
         required: true
         default: "12"
+        type: choice
+        options:
+          - "3"
+          - "6"
+          - "12"
 
 permissions:
   contents: write
@@ -28,28 +33,11 @@ jobs:
           sudo chown -R 50000:0 raw clean logs plugins docs config
           sudo chmod -R 775 raw clean logs plugins docs config
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Create .env file
         run: |
           echo "OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY }}" >> .env
           echo "DATABASE_URL=${{ secrets.NEON_DATABASE_URL }}" >> .env
-          echo "DATABASE_URL_WRITER=${{ secrets.NEON_DATABASE_URL_WRITER }}" >> .env
           echo "AIRFLOW_UID=50000" >> .env
-
-      - name: Build image with cache
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: |
-            air-quality-pipeline-airflow-scheduler:latest
-            air-quality-pipeline-airflow-init:latest
-            air-quality-pipeline-airflow-webserver:latest
-            air-quality-pipeline-pipeline:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Start Airflow with Docker Compose
         run: |
@@ -59,21 +47,28 @@ jobs:
         run: |
           docker compose ps
 
+      - name: Calculate dates
+        id: dates
+        run: |
+          END_DATE=$(date +%Y-%m-%d)
+          START_DATE=$(date -d "$END_DATE - ${{ inputs.months }} months" +%Y-%m-%d)
+          echo "start_date=$START_DATE" >> $GITHUB_OUTPUT
+          echo "end_date=$END_DATE" >> $GITHUB_OUTPUT
+
       - name: Run backfill
         run: |
           docker compose exec -T airflow-webserver \
-            airflow dags backfill aqi_pipeline \
-            -s "${{ inputs.start_date }}" \
-            -e "${{ inputs.end_date }}" \
-            --reset-dagruns -y
+            airflow backfill create aqi_pipeline \
+            --start-date ${{ steps.dates.outputs.start_date }} \
+            --end-date ${{ steps.dates.outputs.end_date }}
 
-      - name: Commit raw/ et clean/ produits par le backfill
+      - name: Commit raw/ et clean/
         run: |
           git config user.name "aqi-bot"
           git config user.email "aqi-bot@users.noreply.github.com"
           git config core.fileMode false
           git add raw/ clean/
-          git diff --staged --quiet || git commit -m "chore: backfill ${{ inputs.start_date }} -> ${{ inputs.end_date }}"
+          git diff --staged --quiet || git commit -m "chore: backfill ${{ steps.dates.outputs.start_date }} -> ${{ steps.dates.outputs.end_date }}"
           git pull --rebase
           git push
 
