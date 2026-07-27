@@ -51,16 +51,22 @@ jobs:
         id: dates
         run: |
           END_DATE=$(date +%Y-%m-%d)
-          START_DATE=$(date -d "$END_DATE - ${{ inputs.months }} months" +%Y-%m-%d)
+          START_DATE=$(date --date="$END_DATE - ${{ inputs.months }} months" +%Y-%m-%d 2>/dev/null || date -d "$END_DATE - ${{ inputs.months }} months" +%Y-%m-%d)
           echo "start_date=$START_DATE" >> $GITHUB_OUTPUT
           echo "end_date=$END_DATE" >> $GITHUB_OUTPUT
+
+      - name: Debug dates
+        run: |
+          echo "Start date: ${{ steps.dates.outputs.start_date }}"
+          echo "End date: ${{ steps.dates.outputs.end_date }}"
 
       - name: Run backfill
         run: |
           docker compose exec -T airflow-webserver \
-            airflow backfill create aqi_pipeline \
-            --start-date ${{ steps.dates.outputs.start_date }} \
-            --end-date ${{ steps.dates.outputs.end_date }}
+            airflow backfill create \
+            --dag-id aqi_pipeline \
+            --from-date ${{ steps.dates.outputs.start_date }} \
+            --to-date ${{ steps.dates.outputs.end_date }}
 
       - name: Commit raw/ et clean/
         run: |
