@@ -23,6 +23,7 @@ concurrency:
 jobs:
   run-backfill:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -37,6 +38,7 @@ jobs:
         run: |
           echo "OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY }}" >> .env
           echo "DATABASE_URL=${{ secrets.NEON_DATABASE_URL }}" >> .env
+          echo "DATABASE_URL_WRITER=${{ secrets.NEON_DATABASE_URL_WRITER }}" >> .env
           echo "AIRFLOW_UID=50000" >> .env
 
       - name: Start Airflow with Docker Compose
@@ -47,11 +49,18 @@ jobs:
         run: |
           docker compose ps
 
+      - name: Wait for DAG discovery
+        run: |
+          sleep 30
+          docker compose exec -T airflow-webserver \
+            airflow dags list | grep aqi_pipeline
+
       - name: Calculate dates
         id: dates
         run: |
           END_DATE=$(date +%Y-%m-%d)
           START_DATE=$(date --date="$END_DATE - ${{ inputs.months }} months" +%Y-%m-%d 2>/dev/null || date -d "$END_DATE - ${{ inputs.months }} months" +%Y-%m-%d)
+
           echo "start_date=$START_DATE" >> $GITHUB_OUTPUT
           echo "end_date=$END_DATE" >> $GITHUB_OUTPUT
 
@@ -60,21 +69,30 @@ jobs:
           echo "Start date: ${{ steps.dates.outputs.start_date }}"
           echo "End date: ${{ steps.dates.outputs.end_date }}"
 
+      - name: Debug DAG
+        run: |
+          docker compose exec -T airflow-webserver \
+            airflow dags details aqi_pipeline
+
       - name: Run backfill
         run: |
           docker compose exec -T airflow-webserver \
             airflow backfill create \
             --dag-id aqi_pipeline \
-            --from-date ${{ steps.dates.outputs.start_date }} \
-            --to-date ${{ steps.dates.outputs.end_date }}
+            --from-date "${{ steps.dates.outputs.start_date }}" \
+            --to-date "${{ steps.dates.outputs.end_date }}"
 
       - name: Commit raw/ et clean/
         run: |
           git config user.name "aqi-bot"
           git config user.email "aqi-bot@users.noreply.github.com"
           git config core.fileMode false
+
           git add raw/ clean/
-          git diff --staged --quiet || git commit -m "chore: backfill ${{ steps.dates.outputs.start_date }} -> ${{ steps.dates.outputs.end_date }}"
+
+          git diff --staged --quiet || \
+          git commit -m "chore: backfill ${{ steps.dates.outputs.start_date }} -> ${{ steps.dates.outputs.end_date }}"
+
           git pull --rebase
           git push
 
