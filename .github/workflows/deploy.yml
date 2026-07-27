@@ -1,40 +1,32 @@
 name: AQI Pipeline (Airflow via Docker)
-
 on:
   schedule:
     - cron: '5 * * * *'
   workflow_dispatch:
-
 permissions:
   contents: write
-
 concurrency:
   group: aqi-pipeline
   cancel-in-progress: false
-
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Fix permissions for mounted volumes
         run: |
           mkdir -p raw clean logs plugins docs config
           sudo chown -R 50000:0 raw clean logs plugins docs config
           sudo chmod -R 775 raw clean logs plugins docs config
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Create .env file
         run: |
           echo "OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY }}" >> .env
           echo "DATABASE_URL=${{ secrets.NEON_DATABASE_URL }}" >> .env
           echo "DATABASE_URL_WRITER=${{ secrets.NEON_DATABASE_URL_WRITER }}" >> .env
           echo "AIRFLOW_UID=50000" >> .env
-
       - name: Build image with cache
         uses: docker/build-push-action@v6
         with:
@@ -47,20 +39,19 @@ jobs:
             air-quality-pipeline-pipeline:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
       - name: Start Airflow with Docker Compose
         run: |
           docker compose up -d --wait --wait-timeout 180
-
       - name: Check container status
         run: |
           docker compose ps
-
       - name: Run DAG synchronously
         run: |
           docker compose exec -T airflow-webserver \
             airflow dags test aqi_pipeline "$(date -u +'%Y-%m-%d')"
-
+      - name: Fix permissions after Docker run
+        run: |
+          sudo chown -R $USER:$USER raw clean logs plugins docs config
       - name: Commit raw/ et clean/ produits par le run
         run: |
           git config user.name "aqi-bot"
@@ -70,12 +61,10 @@ jobs:
           git diff --staged --quiet || git commit -m "chore: sync raw+clean $(date -u +'%Y-%m-%dT%H:%M')"
           git pull --rebase
           git push
-
       - name: Show logs
         if: always()
         run: |
           docker compose logs --tail 200
-
       - name: Clean up
         if: always()
         run: |
