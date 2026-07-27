@@ -6,24 +6,18 @@ on:
       months:
         description: "Nombre de mois d'historique à récupérer"
         required: true
-        default: "12"
-        type: choice
-        options:
-          - "3"
-          - "6"
-          - "12"
+        default: "3"
 
 permissions:
   contents: write
 
 concurrency:
-  group: aqi-backfill
+  group: aqi-pipeline
   cancel-in-progress: false
 
 jobs:
   run-backfill:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -34,12 +28,27 @@ jobs:
           sudo chown -R 50000:0 raw clean logs plugins docs config
           sudo chmod -R 775 raw clean logs plugins docs config
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Create .env file
         run: |
           echo "OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY }}" >> .env
           echo "DATABASE_URL=${{ secrets.NEON_DATABASE_URL }}" >> .env
           echo "DATABASE_URL_WRITER=${{ secrets.NEON_DATABASE_URL_WRITER }}" >> .env
           echo "AIRFLOW_UID=50000" >> .env
+
+      - name: Build image with cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: |
+            air-quality-pipeline-airflow-scheduler:latest
+            air-quality-pipeline-airflow-init:latest
+            air-quality-pipeline-airflow-webserver:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Start Airflow with Docker Compose
         run: |
@@ -49,50 +58,28 @@ jobs:
         run: |
           docker compose ps
 
-      - name: Wait for DAG discovery
-        run: |
-          sleep 30
-          docker compose exec -T airflow-webserver \
-            airflow dags list | grep aqi_pipeline
-
-      - name: Calculate dates
-        id: dates
-        run: |
-          END_DATE=$(date +%Y-%m-%d)
-          START_DATE=$(date --date="$END_DATE - ${{ inputs.months }} months" +%Y-%m-%d 2>/dev/null || date -d "$END_DATE - ${{ inputs.months }} months" +%Y-%m-%d)
-
-          echo "start_date=$START_DATE" >> $GITHUB_OUTPUT
-          echo "end_date=$END_DATE" >> $GITHUB_OUTPUT
-
-      - name: Debug dates
-        run: |
-          echo "Start date: ${{ steps.dates.outputs.start_date }}"
-          echo "End date: ${{ steps.dates.outputs.end_date }}"
-
-      - name: Debug DAG
+      - name: Run backfill script
         run: |
           docker compose exec -T airflow-webserver \
-            airflow dags details aqi_pipeline
+            python scripts/extraction/backfill_aqi.py --months ${{ github.event.inputs.months }}
 
-      - name: Run backfill
+      - name: Rebuild clean/ from raw/
         run: |
           docker compose exec -T airflow-webserver \
-            airflow backfill create \
-            --dag-id aqi_pipeline \
-            --from-date "${{ steps.dates.outputs.start_date }}" \
-            --to-date "${{ steps.dates.outputs.end_date }}"
+            python scripts/stockage/build_clean.py
 
-      - name: Commit raw/ et clean/
+      - name: Load warehouse
+        run: |
+          docker compose exec -T airflow-webserver \
+            python scripts/warehouse/load_warehouse.py clean/air_quality_clean.csv
+
+      - name: Commit raw/ et clean/ produits par le backfill
         run: |
           git config user.name "aqi-bot"
           git config user.email "aqi-bot@users.noreply.github.com"
           git config core.fileMode false
-
           git add raw/ clean/
-
-          git diff --staged --quiet || \
-          git commit -m "chore: backfill ${{ steps.dates.outputs.start_date }} -> ${{ steps.dates.outputs.end_date }}"
-
+          git diff --staged --quiet || git commit -m "chore: backfill ${{ github.event.inputs.months }} mois $(date -u +'%Y-%m-%dT%H:%M')"
           git pull --rebase
           git push
 
