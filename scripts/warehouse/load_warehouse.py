@@ -54,12 +54,12 @@ def load_warehouse(clean_csv_path: str = DEFAULT_CLEAN_CSV_PATH) -> None:
         unique_cities = df[["city", "country", "lat", "lon"]].drop_duplicates()
 
         city_insert_query = """
-                            INSERT INTO dim_city (city_name, country, latitude, longitude)
-                            VALUES (%s, %s, %s, %s)
-                                ON CONFLICT (city_name) DO UPDATE SET
-                                latitude = EXCLUDED.latitude,
-                                                               longitude = EXCLUDED.longitude; \
-                            """
+            INSERT INTO dim_city (city_name, country, latitude, longitude)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (city_name) DO UPDATE SET
+                latitude = EXCLUDED.latitude,
+                longitude = EXCLUDED.longitude;
+            """
         cities_data = [
             (row["city"], row["country"], float(row["lat"]), float(row["lon"]))
             for _, row in unique_cities.iterrows()
@@ -88,13 +88,12 @@ def load_warehouse(clean_csv_path: str = DEFAULT_CLEAN_CSV_PATH) -> None:
             ))
 
         time_insert_query = """
-                            INSERT INTO dim_time
-                            (time_id, timestamp_utc, date_day, hour, day_of_week, day_name, month, year, is_weekend)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                ON CONFLICT (time_id) DO NOTHING; \
-                            """
+            INSERT INTO dim_time
+            (time_id, timestamp_utc, date_day, hour, day_of_week, day_name, month, year, is_weekend)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (time_id) DO NOTHING;
+            """
         execute_batch(cursor, time_insert_query, time_data)
-
 
         logger.info("Traitement de fact_air_quality...")
         fact_data = []
@@ -119,24 +118,28 @@ def load_warehouse(clean_csv_path: str = DEFAULT_CLEAN_CSV_PATH) -> None:
                 safe_val("aqi"),
                 safe_val("pm2_5"),
                 safe_val("pm10"),
+                safe_val("no"),
                 safe_val("no2"),
                 safe_val("o3"),
                 safe_val("so2"),
                 safe_val("co"),
+                safe_val("nh3"),
             ))
 
         fact_insert_query = """
-                            INSERT INTO fact_air_quality (city_id, time_id, aqi, pm2_5, pm10, no2, o3, so2, co)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                ON CONFLICT (city_id, time_id) DO UPDATE SET
-                                aqi = EXCLUDED.aqi,
-                                                                      pm2_5 = EXCLUDED.pm2_5,
-                                                                      pm10 = EXCLUDED.pm10,
-                                                                      no2 = EXCLUDED.no2,
-                                                                      o3 = EXCLUDED.o3,
-                                                                      so2 = EXCLUDED.so2,
-                                                                      co = EXCLUDED.co; \
-                            """
+            INSERT INTO fact_air_quality (city_id, time_id, aqi, pm2_5, pm10, no, no2, o3, so2, co, nh3)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (city_id, time_id) DO UPDATE SET
+                aqi = EXCLUDED.aqi,
+                pm2_5 = EXCLUDED.pm2_5,
+                pm10 = EXCLUDED.pm10,
+                no = EXCLUDED.no,
+                no2 = EXCLUDED.no2,
+                o3 = EXCLUDED.o3,
+                so2 = EXCLUDED.so2,
+                co = EXCLUDED.co,
+                nh3 = EXCLUDED.nh3;
+            """
         execute_batch(cursor, fact_insert_query, fact_data)
 
         conn.commit()

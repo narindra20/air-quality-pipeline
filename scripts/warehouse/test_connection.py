@@ -1,4 +1,3 @@
-
 import os
 import sys
 import logging
@@ -58,5 +57,5 @@ def test_connection() -> None:
         sys.exit(1)
 
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     test_connection()

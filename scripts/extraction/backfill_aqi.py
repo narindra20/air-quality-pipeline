@@ -12,7 +12,9 @@ import requests
 
 RAW_DIR = Path("raw")
 VILLES_CONFIG_PATH = Path("config/villes.json")
-HISTORY_URL = "http://api.openweathermap.org/data/2.5/air_pollution/history"
+HISTORY_URL = "https://api.openweathermap.org/data/2.5/air_pollution/history"
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 5
 
 OWM_HISTORY_START = datetime(2020, 11, 27, tzinfo=timezone.utc)
 MAX_CALLS_PER_MIN = 55
@@ -109,20 +111,26 @@ def main():
                 minute_window_start = time.monotonic()
 
             print(f"[{ville['ville']}] {chunk_start:%Y-%m} ...", end=" ", flush=True)
-            try:
-                payload = fetch_history(
-                    lat=ville["lat"],
-                    lon=ville["lon"],
-                    start=chunk_start,
-                    end=chunk_end,
-                    api_key=api_key,
-                )
-                path = save_raw(ville, chunk_start, payload)
-                n_points = len(payload.get("list", []))
-                total_points += n_points
-                print(f"OK -> {path.name} ({n_points} points)")
-            except requests.HTTPError as exc:
-                print(f"ERREUR: {exc}")
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    payload = fetch_history(
+                        lat=ville["lat"],
+                        lon=ville["lon"],
+                        start=chunk_start,
+                        end=chunk_end,
+                        api_key=api_key,
+                    )
+                    path = save_raw(ville, chunk_start, payload)
+                    n_points = len(payload.get("list", []))
+                    total_points += n_points
+                    print(f"OK -> {path.name} ({n_points} points)")
+                    break
+                except requests.exceptions.RequestException as exc:
+                    if attempt < MAX_RETRIES:
+                        print(f"ERREUR (tentative {attempt}/{MAX_RETRIES}): {exc}, retry dans {RETRY_DELAY_SECONDS}s")
+                        time.sleep(RETRY_DELAY_SECONDS)
+                    else:
+                        print(f"ÉCHEC définitif après {MAX_RETRIES} tentatives: {exc}")
 
             calls_this_minute += 1
             total_calls += 1

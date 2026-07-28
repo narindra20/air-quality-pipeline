@@ -1,7 +1,7 @@
 name: AQI Pipeline (Airflow via Docker)
 on:
   schedule:
-    - cron: '5 * * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
 permissions:
   contents: write
@@ -51,7 +51,8 @@ jobs:
             airflow dags test aqi_pipeline "$(date -u +'%Y-%m-%d')"
       - name: Fix permissions after Docker run
         run: |
-          sudo chown -R $USER:$USER raw clean logs plugins docs config
+          sudo chown -R "$USER":"$USER" "$GITHUB_WORKSPACE"
+          sudo chmod -R u+rwX raw clean logs plugins docs config
       - name: Commit raw/ et clean/ produits par le run
         run: |
           git config user.name "aqi-bot"
@@ -59,7 +60,8 @@ jobs:
           git config core.fileMode false
           git add raw/ clean/
           git diff --staged --quiet || git commit -m "chore: sync raw+clean $(date -u +'%Y-%m-%dT%H:%M')"
-          git pull --rebase
+          git fetch origin main
+          git merge origin/main --no-edit -X ours
           git push
       - name: Show logs
         if: always()
