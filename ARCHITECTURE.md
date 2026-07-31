@@ -60,15 +60,13 @@ La base expose deux rôles Postgres distincts en plus du rôle propriétaire Neo
 
 ## Limites connues
 
-- *Période couverte* : du 2026-04-01 au 2026-07-30 (~4 mois), au-delà du minimum de 3 mois requis.
-- *Couverture horaire* : 14 030 lignes sur 14 465 attendues (5 villes × 2893 heures), soit 3,01 % de 
-  lignes manquantes au global. Le taux est identique pour les 5 villes (135 heures manquantes chacune, 
-  4,67 % par ville) — cette homogénéité confirme que les trous proviennent de runs GitHub Actions 
-  entiers non exécutés, plutôt que d'erreurs API isolées à une ville.
-- *Cause* : GitHub Actions ne garantit pas l'exactitude temporelle des workflows planifiés (schedule:) ;
-  sous forte charge de l'infrastructure GitHub, certains runs horaires peuvent être retardés ou sautés 
-  entièrement. Comportement documenté par GitHub, combiné à notre concurrency: cancel-in-progress: false 
-  qui empêche plusieurs runs simultanés.
-- *Mitigation* : le pipeline de backfill (AQI Backfill Pipeline, workflow_dispatch) permet de 
-  relancer une collecte historique et de reconstruire clean/ depuis raw/, comblant les trous 
-  identifiés a posteriori.
+## Limites connues
+
+- **Période couverte** : du 2026-04-01 au [date actuelle] (~4 mois), au-delà du minimum de 3 mois requis.
+- **Couverture horaire** : 0,51 % de lignes manquantes au global après backfills successifs (3,01 % initialement).
+- **Cause** : GitHub Actions ne garantit pas l'exactitude temporelle des workflows planifiés (`schedule:`) ;
+  sous forte charge de l'infrastructure GitHub, certains runs horaires peuvent être retardés ou sautés
+  entièrement, comportement amplifié par notre paramètre `concurrency: cancel-in-progress: false`.
+- **Mitigation** : pipeline de backfill (`AQI Backfill Pipeline`, `workflow_dispatch`) permettant de
+  reconstruire `raw/` et `clean/` depuis l'historique de l'API. Exécuté à plusieurs reprises, réduisant
+  le taux de trous de 3,01 % à 0,51 %.
